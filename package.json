@@ -1,0 +1,13 @@
+{
+    "name": "coinstats-portfolio-scraper",
+    "version": "1.0.0",
+    "main": "dev.js",
+    "scripts": {
+        "dev": "node dev.js"
+    },
+    "dependencies": {
+        "cors": "^2.8.5",
+        "express": "^4.18.2",
+        "puppeteer": "^24.0.0"
+    }
+}
