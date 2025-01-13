@@ -6,10 +6,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Flag to track if a scraping operation is in progress
-let isScrapingInProgress = false;
-let lastScrapeTime = 0;
-const COOLDOWN_PERIOD = 5000; // 5 seconds cooldown between requests
+// Track when the last request was made
+let lastRequestTime = 0;
+const ONE_MINUTE = 60000; // 60 seconds in milliseconds
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -20,26 +19,19 @@ app.post('/api/scrape', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Check if scraping is already in progress
-    if (isScrapingInProgress) {
-      return res.status(429).json({ 
-        error: 'A scraping operation is already in progress. Please try again later.' 
-      });
-    }
-
-    // Check cooldown period
+    // Check if a minute has passed since the last request
     const currentTime = Date.now();
-    const timeSinceLastScrape = currentTime - lastScrapeTime;
-    if (timeSinceLastScrape < COOLDOWN_PERIOD) {
-      const waitTime = COOLDOWN_PERIOD - timeSinceLastScrape;
+    const timeElapsed = currentTime - lastRequestTime;
+    
+    if (timeElapsed < ONE_MINUTE) {
+      const waitSeconds = Math.ceil((ONE_MINUTE - timeElapsed) / 1000);
       return res.status(429).json({
-        error: `Please wait ${Math.ceil(waitTime / 1000)} seconds before making another request`
+        error: `Rate limit exceeded. Please wait ${waitSeconds} seconds before trying again.`
       });
     }
 
-    // Set scraping flag and update last scrape time
-    isScrapingInProgress = true;
-    lastScrapeTime = currentTime;
+    // Update last request time
+    lastRequestTime = currentTime;
 
     let browser;
     try {
@@ -58,8 +50,6 @@ app.post('/api/scrape', async (req, res) => {
       browser = await puppeteer.launch(config);
 
       const page = await browser.newPage();
-      
-      // Set longer timeout for navigation
       await page.setDefaultNavigationTimeout(30000);
 
       console.log('Loading page...');
@@ -107,15 +97,10 @@ app.post('/api/scrape', async (req, res) => {
         await browser.close();
       }
       res.status(500).json({ error: error.toString() });
-    } finally {
-      // Always reset the scraping flag, even if an error occurred
-      isScrapingInProgress = false;
     }
 
   } catch (error) {
     console.error('Outer Error:', error);
-    // Reset flag in case of unexpected errors
-    isScrapingInProgress = false;
     res.status(500).json({ error: error.toString() });
   }
 });
