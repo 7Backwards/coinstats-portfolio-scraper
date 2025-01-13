@@ -6,10 +6,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Flag to track if a scraping operation is in progress
-let isScrapingInProgress = false;
-let lastScrapeTime = 0;
-const COOLDOWN_PERIOD = 5000; // 5 seconds cooldown between requests
+let lastRequestTime = 0;
+const ONE_MINUTE = 60000;
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -20,26 +18,17 @@ app.post('/api/scrape', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Check if scraping is already in progress
-    if (isScrapingInProgress) {
-      return res.status(429).json({ 
-        error: 'A scraping operation is already in progress. Please try again later.' 
-      });
-    }
-
-    // Check cooldown period
     const currentTime = Date.now();
-    const timeSinceLastScrape = currentTime - lastScrapeTime;
-    if (timeSinceLastScrape < COOLDOWN_PERIOD) {
-      const waitTime = COOLDOWN_PERIOD - timeSinceLastScrape;
+    const timeElapsed = currentTime - lastRequestTime;
+    
+    if (timeElapsed < ONE_MINUTE) {
+      const waitSeconds = Math.ceil((ONE_MINUTE - timeElapsed) / 1000);
       return res.status(429).json({
-        error: `Please wait ${Math.ceil(waitTime / 1000)} seconds before making another request`
+        error: `Rate limit exceeded. Please wait ${waitSeconds} seconds before trying again.`
       });
     }
 
-    // Set scraping flag and update last scrape time
-    isScrapingInProgress = true;
-    lastScrapeTime = currentTime;
+    lastRequestTime = currentTime;
 
     let browser;
     try {
@@ -58,32 +47,30 @@ app.post('/api/scrape', async (req, res) => {
       browser = await puppeteer.launch(config);
 
       const page = await browser.newPage();
-      
-      // Set longer timeout for navigation
-      await page.setDefaultNavigationTimeout(30000);
+      await page.setDefaultNavigationTimeout(60000);
 
       console.log('Loading page...');
       await page.goto(url, { 
         waitUntil: 'networkidle0',
-        timeout: 30000 
+        timeout: 60000 
       });
 
       console.log('Waiting for data to load...');
-      await delay(1000);
 
+      const text = await page.evaluate(() => document.body.textContent);
+      
       const data = await page.evaluate(() => {
-        const text = document.body.textContent;
+        const text = document.body.innerText;
         const coins = [];
-
-        const regex = /([A-Za-z\s]+)•\s*([A-Z]+)\s*([\d,]+\.?\d*)/g;
+        const regex = /([A-Za-z\s]+)•\s*([A-Z]+)\s*([\d,]+(?:\.?\d{0,3})?)/g;
         let match;
-
+      
         while ((match = regex.exec(text)) !== null) {
           const [_, name, symbol, amount] = match;
           if (amount) {
             const cleanAmount = amount.replace(/,/g, '');
             const parsedAmount = parseFloat(cleanAmount);
-
+      
             if (!isNaN(parsedAmount)) {
               coins.push({
                 name: name.trim(),
@@ -93,7 +80,7 @@ app.post('/api/scrape', async (req, res) => {
             }
           }
         }
-
+      
         return coins;
       });
 
@@ -107,15 +94,10 @@ app.post('/api/scrape', async (req, res) => {
         await browser.close();
       }
       res.status(500).json({ error: error.toString() });
-    } finally {
-      // Always reset the scraping flag, even if an error occurred
-      isScrapingInProgress = false;
     }
 
   } catch (error) {
     console.error('Outer Error:', error);
-    // Reset flag in case of unexpected errors
-    isScrapingInProgress = false;
     res.status(500).json({ error: error.toString() });
   }
 });
